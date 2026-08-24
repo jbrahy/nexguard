@@ -45,3 +45,7 @@ macOS, Linux, and Windows.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
