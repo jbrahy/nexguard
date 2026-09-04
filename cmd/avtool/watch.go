@@ -94,22 +94,32 @@ func runHeartbeat(out io.Writer, stats *watchStats, interval time.Duration, stop
 	}
 }
 
+
+func validateWatchPaths(paths []string) error {
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("watch path %q does not exist", p)
+			}
+			return fmt.Errorf("watch path %q: %w", p, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("watch path %q is not a directory", p)
+		}
+	}
+	return nil
+}
+
 func runWatch(cmd *cobra.Command, args []string) error {
 	db := dbFromCmd(cmd)
 	stats := &watchStats{}
 	handler := newFileHandler(db, notify.Default(), cmd.ErrOrStderr(), stats)
 
-	// Pre-validate paths so the startup message reports how many paths
-	// actually exist and will be watched, not just how many were passed.
-	// watcher.Watch's own zero-success check still catches paths that
-	// exist but fail to add for other reasons (e.g. permissions).
-	existing := 0
-	for _, p := range args {
-		if _, err := os.Stat(p); err == nil {
-			existing++
-		} else {
-			fmt.Fprintf(cmd.ErrOrStderr(), "watch: %s does not exist, will not be watched: %v\n", p, err)
-		}
+	// Fail fast on missing or non-directory paths so we never start a
+	// watcher that silently covers nothing.
+	if err := validateWatchPaths(args); err != nil {
+		return err
 	}
 
 	stop := make(chan struct{})
@@ -120,7 +130,7 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		close(stop)
 	}()
 
-	fmt.Fprintf(cmd.OutOrStdout(), "watching %d path(s), press Ctrl+C to stop\n", existing)
+	fmt.Fprintf(cmd.OutOrStdout(), "watching %d path(s), press Ctrl+C to stop\n", len(args))
 
 	if !watchQuiet {
 		go runHeartbeat(cmd.OutOrStdout(), stats, heartbeatInterval, stop)
