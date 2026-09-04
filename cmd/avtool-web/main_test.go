@@ -3,11 +3,14 @@ package main
 import (
 	"database/sql"
 	"html/template"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jbrahy/AntiVirus/internal/web/config"
 	webdb "github.com/jbrahy/AntiVirus/internal/web/db"
@@ -103,5 +106,47 @@ func TestStripeWebhookRouteIsRegisteredAndNotBehindAuth(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (route registered, not behind auth, signature rejected)", rec.Code)
+	}
+}
+
+func TestServeGracefulShutsDownOnSignal(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: mux}
+	// Replace ListenAndServe path by setting Addr and using a custom serve via Serve in goroutine —
+	// serveGraceful calls ListenAndServe, so bind Addr to the free port.
+	srv.Addr = ln.Addr().String()
+	_ = ln.Close() // free the port for ListenAndServe
+
+	stop := make(chan os.Signal, 1)
+	done := make(chan error, 1)
+	go func() { done <- serveGraceful(srv, stop, time.Second) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		res, err := http.Get("http://" + srv.Addr + "/")
+		if err == nil {
+			res.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server not ready: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stop <- syscall.SIGTERM
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown timed out")
 	}
 }

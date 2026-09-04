@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -100,7 +105,38 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 	log.Printf("avtool-web listening on %s", addr)
-	if err := srv.ListenAndServe(); err != nil {
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	if err := serveGraceful(srv, stop, 10*time.Second); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+// serveGraceful runs srv until stop receives a signal, then shuts down with
+// shutdownTimeout so in-flight requests can finish.
+func serveGraceful(srv *http.Server, stop <-chan os.Signal, shutdownTimeout time.Duration) error {
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	if err, ok := <-errCh; ok && err != nil {
+		return err
+	}
+	return nil
 }
