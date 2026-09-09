@@ -94,7 +94,6 @@ func runHeartbeat(out io.Writer, stats *watchStats, interval time.Duration, stop
 	}
 }
 
-
 func validateWatchPaths(paths []string) error {
 	for _, p := range paths {
 		info, err := os.Stat(p)
