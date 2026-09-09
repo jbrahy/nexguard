@@ -38,6 +38,8 @@ func newRouter(db *sql.DB, tmpl *template.Template, cfg *config.Config) *chi.Mux
 	r.Get("/articles", handlers.ArticlesIndex(tmpl))
 	r.Get("/articles/{slug}", handlers.ArticleShow(tmpl))
 	r.Get("/alternatives", handlers.Alternatives(tmpl))
+	r.Get("/robots.txt", handlers.RobotsTXT())
+	r.Get("/sitemap.xml", handlers.SitemapXML())
 
 	// Login attempts and license validation are both credential-guessing
 	// surfaces (a password, a license key) and both get a per-IP rate limit
