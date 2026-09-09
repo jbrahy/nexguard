@@ -150,3 +150,16 @@ func TestServeGracefulShutsDownOnSignal(t *testing.T) {
 		t.Fatal("shutdown timed out")
 	}
 }
+
+func TestCrawlerRoutesAreRegistered(t *testing.T) {
+	r := newRouter(nil, nil, testConfig())
+	for _, path := range []string{"/robots.txt", "/sitemap.xml"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d, want 200", path, rec.Code)
+		}
+	}
+}
