@@ -69,6 +69,17 @@ func TestQuarantineListRestorePurge(t *testing.T) {
 }
 
 func TestQuarantineListJSON(t *testing.T) {
+	emptyDBPath := filepath.Join(t.TempDir(), "empty-avtool.db")
+	emptyOut := runCLI(t, emptyDBPath, "quarantine", "list", "--json")
+
+	var emptyRecords []quarantine.Record
+	if err := json.Unmarshal([]byte(emptyOut), &emptyRecords); err != nil {
+		t.Fatalf("json.Unmarshal failed on empty output %q: %v", emptyOut, err)
+	}
+	if emptyRecords == nil || len(emptyRecords) != 0 {
+		t.Fatalf("expected empty JSON array, got %q", emptyOut)
+	}
+
 	dir := t.TempDir()
 	qDir := filepath.Join(t.TempDir(), "quarantine")
 	dbPath := filepath.Join(t.TempDir(), "avtool.db")

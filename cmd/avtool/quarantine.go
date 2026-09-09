@@ -34,6 +34,9 @@ var quarantineListCmd = &cobra.Command{
 		}
 
 		if quarantineListJSONFlag {
+			if records == nil {
+				records = []quarantine.Record{}
+			}
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
 			return enc.Encode(records)
