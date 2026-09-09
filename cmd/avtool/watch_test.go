@@ -129,3 +129,21 @@ func TestWatchQuietFlagRegistered(t *testing.T) {
 		t.Fatalf("--quiet default = %q, want false", flag.DefValue)
 	}
 }
+
+func TestValidateWatchPaths(t *testing.T) {
+	dir := t.TempDir()
+	if err := validateWatchPaths([]string{dir}); err != nil {
+		t.Fatalf("existing dir: %v", err)
+	}
+	missing := filepath.Join(dir, "nope")
+	if err := validateWatchPaths([]string{missing}); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("missing path error = %v", err)
+	}
+	file := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWatchPaths([]string{file}); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("file path error = %v", err)
+	}
+}
