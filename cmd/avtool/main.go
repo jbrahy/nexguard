@@ -64,8 +64,8 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&dbPathFlag, "db-path", "", "path to avtool's SQLite database (default: ~/Library/Application Support/avtool/avtool.db)")
-	rootCmd.PersistentFlags().StringVar(&quarantineDirFlag, "quarantine-dir", "", "path to quarantine directory (default: ~/Library/Application Support/avtool/quarantine)")
+	rootCmd.PersistentFlags().StringVar(&dbPathFlag, "db-path", "", "path to avtool's SQLite database (default: <OS config dir>/avtool/avtool.db; see README)")
+	rootCmd.PersistentFlags().StringVar(&quarantineDirFlag, "quarantine-dir", "", "path to quarantine directory (default: <OS config dir>/avtool/quarantine; see README)")
 	rootCmd.AddCommand(versionCmd)
 }
 
