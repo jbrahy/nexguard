@@ -79,6 +79,19 @@ Or build from source (Go 1.26+, no CGO required):
 go build -o bin/avtool ./cmd/avtool
 ```
 
+### Where it keeps its data
+
+The database, quarantine directory, and detection log live under an `avtool`
+directory inside the OS config directory that Go's `os.UserConfigDir` reports:
+
+| OS | Directory |
+|---|---|
+| macOS | `~/Library/Application Support/avtool/` |
+| Linux | `~/.config/avtool/` (or `$XDG_CONFIG_HOME/avtool/`) |
+| Windows | `%AppData%\avtool\` |
+
+`--db-path` and `--quarantine-dir` override the first two.
+
 ## Tests
 
 ```sh
