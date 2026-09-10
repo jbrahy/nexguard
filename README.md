@@ -122,10 +122,11 @@ The Go module path is still `github.com/jbrahy/AntiVirus`, from before the
 project was renamed. Import paths reflect that; the repository and product do
 not.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the four checks CI runs, and
+how to run the database-backed tests.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
