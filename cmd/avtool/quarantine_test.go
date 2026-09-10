@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,5 +65,49 @@ func TestQuarantineListRestorePurge(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(qDir, fmt.Sprintf("%d-purgehash", purgeID))); !os.IsNotExist(err) {
 		t.Fatalf("expected purged file removed, err = %v", err)
+	}
+}
+
+func TestQuarantineListJSON(t *testing.T) {
+	emptyDBPath := filepath.Join(t.TempDir(), "empty-avtool.db")
+	emptyOut := runCLI(t, emptyDBPath, "quarantine", "list", "--json")
+
+	var emptyRecords []quarantine.Record
+	if err := json.Unmarshal([]byte(emptyOut), &emptyRecords); err != nil {
+		t.Fatalf("json.Unmarshal failed on empty output %q: %v", emptyOut, err)
+	}
+	if emptyRecords == nil || len(emptyRecords) != 0 {
+		t.Fatalf("expected empty JSON array, got %q", emptyOut)
+	}
+
+	dir := t.TempDir()
+	qDir := filepath.Join(t.TempDir(), "quarantine")
+	dbPath := filepath.Join(t.TempDir(), "avtool.db")
+
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	threatPath := filepath.Join(dir, "quarantined-file.bin")
+	if err := os.WriteFile(threatPath, []byte("threat-payload"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	recordID, err := quarantine.Quarantine(db, qDir, threatPath, "threatsha256")
+	if err != nil {
+		t.Fatalf("Quarantine fixture: %v", err)
+	}
+	db.Close()
+
+	out := runCLI(t, dbPath, "--quarantine-dir", qDir, "quarantine", "list", "--json")
+
+	var records []quarantine.Record
+	if err := json.Unmarshal([]byte(out), &records); err != nil {
+		t.Fatalf("json.Unmarshal failed on output %q: %v", out, err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record in JSON output, got %d", len(records))
+	}
+	if records[0].ID != recordID || records[0].Hash != "threatsha256" {
+		t.Fatalf("unexpected JSON record payload: %+v", records[0])
 	}
 }

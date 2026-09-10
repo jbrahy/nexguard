@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -8,6 +9,8 @@ import (
 	"github.com/jbrahy/AntiVirus/internal/quarantine"
 	"github.com/spf13/cobra"
 )
+
+var quarantineListJSONFlag bool
 
 var quarantineCmd = &cobra.Command{
 	Use:   "quarantine",
@@ -29,6 +32,16 @@ var quarantineListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		if quarantineListJSONFlag {
+			if records == nil {
+				records = []quarantine.Record{}
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(records)
+		}
+
 		if len(records) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "no quarantine records")
 			return nil
@@ -84,6 +97,7 @@ var quarantinePurgeCmd = &cobra.Command{
 }
 
 func init() {
+	quarantineListCmd.Flags().BoolVar(&quarantineListJSONFlag, "json", false, "Output quarantine records in JSON format")
 	quarantineCmd.AddCommand(quarantineListCmd, quarantineRestoreCmd, quarantinePurgeCmd)
 	rootCmd.AddCommand(quarantineCmd)
 }
