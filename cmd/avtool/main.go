@@ -54,11 +54,16 @@ func dbFromCmd(cmd *cobra.Command) *sql.DB {
 	return db
 }
 
+// version is overwritten at release-build time with
+// -ldflags "-X main.version=vX.Y.Z". It stays "dev" for a plain `go build`
+// so an unstamped binary never claims to be a release.
+var version = "dev"
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print avtool's version",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintln(cmd.OutOrStdout(), "avtool dev")
+		fmt.Fprintln(cmd.OutOrStdout(), "avtool "+version)
 		return nil
 	},
 }
