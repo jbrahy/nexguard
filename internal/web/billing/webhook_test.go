@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	webdb "github.com/jbrahy/AntiVirus/internal/web/db"
 	"github.com/stripe/stripe-go/v82"
@@ -19,6 +20,10 @@ import (
 )
 
 const testWebhookSecret = "whsec_test_secret"
+
+// mysqlDateTime is MySQL's DATETIME literal layout, used to compare a
+// scanned time.Time against a literal written into the column.
+const mysqlDateTime = "2006-01-02 15:04:05"
 
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -313,5 +318,144 @@ func TestHandleWebhookUnknownCustomerSucceeds(t *testing.T) {
 	rec := postSignedWebhook(t, handler, payload)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 for an event about an unmapped stripe customer (should not be retried by Stripe); body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// signedDelivery captures one signed Stripe delivery so the exact same body
+// and Stripe-Signature header can be posted more than once. postSignedWebhook
+// re-signs on every call, which produces a fresh signature each time; a real
+// duplicate redelivery from Stripe is the identical bytes, identical event ID
+// and identical signature arriving twice, so idempotency tests need this
+// instead.
+type signedDelivery struct {
+	body   []byte
+	header string
+}
+
+func signOnce(payload []byte) signedDelivery {
+	signed := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{
+		Payload: payload,
+		Secret:  testWebhookSecret,
+	})
+	return signedDelivery{body: signed.Payload, header: signed.Header}
+}
+
+func (d signedDelivery) post(t *testing.T, handler http.HandlerFunc) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(d.body))
+	req.Header.Set("Stripe-Signature", d.header)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	return rec
+}
+
+// TestHandleWebhookExactDuplicateCreatedEventIsIdempotent posts one signed
+// customer.subscription.created delivery twice, byte for byte. Stripe
+// redelivers on timeout or a non-2xx response and can redeliver the same
+// event ID even after a 200, so the second delivery must leave the database
+// exactly as the first did: one subscription row, one license, no error.
+func TestHandleWebhookExactDuplicateCreatedEventIsIdempotent(t *testing.T) {
+	d := testDB(t)
+	handler := HandleWebhook(d, testWebhookSecret)
+
+	suffix := uniqueSuffix(t)
+	customerID := "cus_test_dup_" + suffix
+	subscriptionID := "sub_test_dup_" + suffix
+	userID := insertUserWithStripeCustomerID(t, d, fmt.Sprintf("sub-dup-%s@example.com", suffix), customerID)
+
+	delivery := signOnce(subscriptionEventPayload("customer.subscription.created", subscriptionID, customerID, "active", 1893456000))
+
+	if rec := delivery.post(t, handler); rec.Code != http.StatusOK {
+		t.Fatalf("first delivery: status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var firstStatus, firstPeriodEnd string
+	if err := d.QueryRow(`SELECT status, current_period_end FROM subscriptions WHERE stripe_subscription_id = ?`, subscriptionID).
+		Scan(&firstStatus, &firstPeriodEnd); err != nil {
+		t.Fatalf("querying subscription after first delivery: %v", err)
+	}
+
+	if rec := delivery.post(t, handler); rec.Code != http.StatusOK {
+		t.Fatalf("duplicate delivery: status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var subCount int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM subscriptions WHERE stripe_subscription_id = ?`, subscriptionID).Scan(&subCount); err != nil {
+		t.Fatalf("counting subscriptions: %v", err)
+	}
+	if subCount != 1 {
+		t.Fatalf("subscription row count = %d, want exactly 1 after a duplicate delivery", subCount)
+	}
+
+	var secondStatus, secondPeriodEnd string
+	if err := d.QueryRow(`SELECT status, current_period_end FROM subscriptions WHERE stripe_subscription_id = ?`, subscriptionID).
+		Scan(&secondStatus, &secondPeriodEnd); err != nil {
+		t.Fatalf("querying subscription after duplicate delivery: %v", err)
+	}
+	if secondStatus != firstStatus || secondPeriodEnd != firstPeriodEnd {
+		t.Fatalf("subscription changed on duplicate delivery: (%q, %q) -> (%q, %q)",
+			firstStatus, firstPeriodEnd, secondStatus, secondPeriodEnd)
+	}
+
+	var licenseCount int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM licenses WHERE user_id = ?`, userID).Scan(&licenseCount); err != nil {
+		t.Fatalf("counting licenses: %v", err)
+	}
+	if licenseCount != 1 {
+		t.Fatalf("license count = %d, want exactly 1 (duplicate delivery generated a second license)", licenseCount)
+	}
+}
+
+// TestHandleWebhookExactDuplicateDeletedEventDoesNotReRevoke posts one signed
+// customer.subscription.deleted delivery twice. The revocation timestamp is
+// backdated between the two deliveries so a re-revoke is observable: NOW()
+// has one-second resolution and both deliveries land inside the same second,
+// so without backdating an UPDATE that re-revokes would be indistinguishable
+// from one that correctly does nothing.
+func TestHandleWebhookExactDuplicateDeletedEventDoesNotReRevoke(t *testing.T) {
+	d := testDB(t)
+	handler := HandleWebhook(d, testWebhookSecret)
+
+	suffix := uniqueSuffix(t)
+	customerID := "cus_test_dupdel_" + suffix
+	subscriptionID := "sub_test_dupdel_" + suffix
+	userID := insertUserWithStripeCustomerID(t, d, fmt.Sprintf("sub-dupdel-%s@example.com", suffix), customerID)
+
+	created := subscriptionEventPayload("customer.subscription.created", subscriptionID, customerID, "active", 1893456000)
+	if rec := postSignedWebhook(t, handler, created); rec.Code != http.StatusOK {
+		t.Fatalf("created event: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	delivery := signOnce(subscriptionEventPayload("customer.subscription.deleted", subscriptionID, customerID, "canceled", 1893456000))
+	if rec := delivery.post(t, handler); rec.Code != http.StatusOK {
+		t.Fatalf("first deleted delivery: status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	const backdated = "2020-01-02 03:04:05"
+	if _, err := d.Exec(`UPDATE licenses SET revoked_at = ? WHERE user_id = ?`, backdated, userID); err != nil {
+		t.Fatalf("backdating revoked_at: %v", err)
+	}
+
+	if rec := delivery.post(t, handler); rec.Code != http.StatusOK {
+		t.Fatalf("duplicate deleted delivery: status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// internal/web/db.Open sets parseTime, so a DATETIME scans into
+	// time.Time; compare the stored wall-clock value rather than the
+	// driver's rendering of it.
+	var revokedAt time.Time
+	if err := d.QueryRow(`SELECT revoked_at FROM licenses WHERE user_id = ?`, userID).Scan(&revokedAt); err != nil {
+		t.Fatalf("querying revoked_at: %v", err)
+	}
+	if got := revokedAt.Format(mysqlDateTime); got != backdated {
+		t.Fatalf("revoked_at = %q, want %q unchanged (duplicate delivery re-revoked an already-revoked license)", got, backdated)
+	}
+
+	var status string
+	if err := d.QueryRow(`SELECT status FROM subscriptions WHERE stripe_subscription_id = ?`, subscriptionID).Scan(&status); err != nil {
+		t.Fatalf("querying subscription status: %v", err)
+	}
+	if status != "canceled" {
+		t.Fatalf("status = %q, want %q after a duplicate deleted delivery", status, "canceled")
 	}
 }
